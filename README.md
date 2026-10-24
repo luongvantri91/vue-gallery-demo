@@ -9,7 +9,7 @@ Two small tasks of a fullstack assessment.
 
 ## Live demo
 
-`https://<github-username>.github.io/<repository-name>/`
+`https://luongvantri91.github.io/vue-gallery-demo/`
 
 Best viewed at mobile width (browser device toolbar, or open it on a phone).
 
