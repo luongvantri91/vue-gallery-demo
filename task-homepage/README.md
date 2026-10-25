@@ -1,82 +1,59 @@
-# Demo Gallery (Vue 3)
+# Task 2: Homepage (Vue 3)
 
-A mobile-first image gallery homepage, built as a response to the "Create homepage like that" task.
-It reproduces the **layout and behavior** of the reference page with neutral content and its own data layer.
+A mobile-first homepage that reproduces the **layout, colors, sizes and behavior** of the reference page
+`https://43.213.218.98:8000/?800tk#/pages/index/index` (home tab).
+Sizes and colors were measured from the reference page with DevTools (content column 480 px, header 47 px, ball 42 px, tab bar 51 px, and so on).
 
 ## Run it
 
 No install, no build step.
 
 1. Open `index.html` in a modern browser (double-click is enough).
-2. An internet connection is needed for Vue (jsDelivr CDN) and the photos (Lorem Picsum).
-   Without internet, the page still works and shows generated placeholder images.
+2. An internet connection is needed for Vue (jsDelivr CDN) and for the gallery images (public image API). Without it the gallery shows generated posters.
 
-Tip: use the browser's device toolbar (mobile width) for the intended look.
+Use the browser's device toolbar (mobile width) for the intended look. On wide screens the page stays a centered 480 px column, as the reference does.
 
-## What it does
+## What the page contains (top to bottom)
 
-| Feature | Details |
+| Block | Behavior |
 |---|---|
-| Two-column masonry grid | Each new card goes to the shorter column |
-| Infinite scroll | `IntersectionObserver` loads the next page of 10 items |
-| Category switch | Tabs in the header and floating pills; reloads from page 1 |
-| Search | Debounced (300 ms), filters by title |
-| Share | Native share sheet, or copies the link |
-| Hash routing | `#/home`, `#/discover`, `#/publish`, `#/sites`, `#/me` |
-| Loading / empty / error / end states | Skeleton, "No results", tap-to-retry, "End of list" |
-| Resilience | Remote list fails or times out (8 s) → generated items; a photo fails → SVG placeholder |
+| Fixed green header | Logo, three lottery tabs (港彩六合 / 澳门六合 / 快乐8六合), 下载 / 搜索 / 分享 |
+| Banner | The 5 public banner images of the reference page (hotlinked; generated SVG fallback), 180 px high, autoplay every 4 s, swipe or drag, dots |
+| Notice bar | Red speaker icon and a scrolling announcement |
+| Lottery tabs | Name + next draw date for each lottery, blue extra tab on the right |
+| Draw result | Issue number, 6 balls + "+" + special ball (red / blue / green), zodiac and element under each ball, countdown to the next draw, 自动刷新 button |
+| Quick menu | 2 rows of 5 round icons; the first row sticks under the header while scrolling |
+| Gallery | Two-column masonry of poster cards with a title strip, infinite scroll (20 per page), end and retry states. Posters are loaded from the public image API |
+| Floating switch | Three pills above the tab bar; same state as the header tabs |
+| Bottom tab bar | 图库 / 发现 / 发布 (raised round button) / 好站 / 我的 |
 
-## Tech choices
-
-- **Vue 3 from CDN** (`vue.global.prod.js`, pinned version, with SRI hash). Composition API with string templates, so no tooling is required to review the code.
-- **Plain CSS** (`styles.css`), no UI framework.
-- **No backend.** Data comes from [Lorem Picsum](https://picsum.photos), a public image service.
+Switching lottery (header tab, lottery tab or floating pill) reloads the draw result, countdown and gallery from page 1.
+Buttons without a page behind them (search, download, quick menu, other tabs) show a short toast.
 
 ## Project structure
 
 ```
-homepage-vue/
+task-homepage/
 ├─ index.html            Entry point, loads Vue, api.js, app.js
-├─ api.js                Data layer: fetchItems(), cache, fallback, placeholder images
-├─ app.js                Composables, components, root App
+├─ api.js                Data layer: draw, banners, notice, gallery (generated demo data)
+├─ app.js                Composables (toast, countdown, gallery paging), components, root App
 ├─ styles.css            Styles
-├─ api-architecture.md   API architecture, diagrams, comparison with the reference page
+├─ api-architecture.en.md  Data flow and how to connect a real backend
 └─ README.md
 ```
 
-Code map (details are in the comments of each file):
+## Tech choices
 
-- `api.js`: `fetchItems({ category, page, query })` is the only function the UI calls for data.
-- `app.js`: `useGallery` (paging state and business logic), `useHashRoute`, `useToast`, and 7 UI components.
-
-## API contract
-
-`fetchItems` returns the same envelope style as the paginated API seen in the analysis task:
-
-```json
-{
-  "success": true,
-  "data": [{ "id": "a-10", "title": "Author #10", "ratio": 1.2, "hue": 110, "imageUrl": "https://picsum.photos/id/10/400/480" }],
-  "meta": { "page": 1, "perPage": 10, "total": 50, "totalPages": 5, "hasMore": true }
-}
-```
-
-Picsum does not provide categories, search, or a total count, so the data layer builds them on the client:
-each category is a different page of Picsum's public list, and filtering and paging are done in `fetchItems`.
+- **Vue 3 from CDN** (pinned version, SRI hash), Composition API with string templates.
+- **Plain CSS**, inline SVG icons, no UI framework, no images to download.
+- **No backend.** `api.js` returns Promises with a small delay and the same envelope style as the paginated API found in Task 1:
+  `{ success, data, meta: { page, perPage, total, totalPages, hasMore } }`.
 
 ## Scope and limitations
 
-Stated openly so the review is easy:
-
-- **No server-side code.** There is no own backend, authentication, or persistence.
-  Moving to a real API only means replacing the body of `fetchItems()`; the UI does not change
-  (see `api-architecture.md`, section 4).
-- **Reference page content is not reused.** Its images, branding, and private APIs are not copied or called.
-- Pages other than Home are placeholders; Download and quick-menu entries show a toast.
-- No automated tests yet. Behavior was checked manually in the browser.
-- Photos are provided by a third-party service and may change or be slow.
-
-## More
-
-See [api-architecture.en.md](./api-architecture.en.md) (English) or [api-architecture.md](./api-architecture.md) (Vietnamese) for the architecture diagrams, data flow,
-function-by-function business description, and the comparison with the reference page.
+- **Gallery images come from the public image API** used by the reference page (`tuku-be.ptallenvery.com/api/public/pictures/{hongkong|macau|kl8}`, no key, CORS open), as the owner of this demo allowed. Images are hotlinked, never copied into the repo. Titles that look adult-oriented are filtered out, and a card whose image fails gets a generated poster. If the API is unreachable, the whole gallery falls back to generated posters.
+- **Banners are reused** from the reference's public image host (hotlinked, not stored in the repo) for this personal, temporary test only. They are third-party advertisements; remove them before any public use. If one fails to load, a generated red/gold banner is shown instead.
+- **Other content is demo data.** Lottery numbers are generated (seeded by lottery and date) and are not real results.
+- The reference page's logo, texts, domains and private APIs are **not** copied or called. The brand is a neutral "图库.demo".
+- Only the home tab is built. The 发现 / 发布 / 好站 / 我的 pages, search and download are placeholders.
+- No automated tests. Behavior (rendering, sticky row, infinite scroll, lottery switch, remote and fallback images) was checked manually in the browser.

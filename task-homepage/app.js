@@ -1,410 +1,431 @@
-/* Demo Gallery: Vue 3 single-page app (loaded from CDN, no build step).
+/* Homepage of the demo (Vue 3, Composition API, string templates, no build step).
  *
- * Screen: header (tabs, search, share) > quick menu > 2-column photo grid (infinite scroll)
- *         > category pills > bottom navigation.
+ * Layout reproduces the reference mobile page, top to bottom:
+ *   fixed header (logo, lottery tabs, download / search / share)
+ *   -> banner carousel -> scrolling notice -> lottery tabs with dates
+ *   -> latest draw result + countdown -> quick menu (2 rows of 5, first row sticks under the header)
+ *   -> two-column masonry gallery with infinite scroll
+ *   -> floating lottery switch -> fixed bottom tab bar.
  *
- * File layout:
- *   1. Composables  - reusable logic with state (toast, route, gallery)
- *   2. Components   - small UI pieces (icon, header, menu, card, grid, pills, bottom nav)
- *   3. Root App     - wires everything together and mounts the page
- *
- * Data flow: UI event > useGallery > GalleryApi.fetchItems() > columns state > re-render.
+ * Data comes only from window.HomeApi (api.js).
  */
 (() => {
   "use strict";
+  const { createApp, ref, computed, watch, onMounted, onBeforeUnmount, nextTick } = Vue;
+  const api = window.HomeApi;
 
-  const { createApp, ref, computed, watch, onMounted, onBeforeUnmount } = Vue;
-  const { CATEGORIES, fetchItems, placeholderImage } = window.GalleryApi;
+  /* ---------- Icons (inline SVG paths, drawn with currentColor) ---------- */
+  const ICONS = {
+    image: '<path d="M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm3 3.2a1.6 1.6 0 100 3.2 1.6 1.6 0 000-3.2zM5 17h14l-4.5-6-3.2 4-2.3-2.6z"/>',
+    live: '<path d="M4 6h16a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2zm6 3v6l5-3z"/>',
+    cap: '<path d="M12 4L1 9l11 5 9-4.1V15h2V9zM5 13.2V17c0 1.7 3.1 3 7 3s7-1.3 7-3v-3.8l-7 3.2z"/>',
+    book: '<path d="M6 3h12a1 1 0 011 1v14H7a1 1 0 000 2h12v2H7a3 3 0 01-3-3V5a2 2 0 012-2zm3 3v4l2-1.2 2 1.2V6z"/>',
+    history: '<path d="M13 3a9 9 0 11-8.5 12h2.2A7 7 0 1013 5a6.9 6.9 0 00-4.9 2L11 10H4V3l2.7 2.7A9 9 0 0113 3zm-1 5h2v4.6l3 1.8-1 1.7-4-2.4z"/>',
+    star: '<path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17l-6.1 3.4 1.5-6.8L2.2 9l6.9-.7z"/>',
+    trend: '<path d="M3 17l6-6 4 4 7-8 1.4 1.4-8.4 9.6-4-4-4.6 4.6z"/>',
+    paw: '<ellipse cx="12" cy="16" rx="5" ry="4"/><circle cx="6" cy="10" r="2"/><circle cx="18" cy="10" r="2"/><circle cx="9.5" cy="5.5" r="2"/><circle cx="14.5" cy="5.5" r="2"/>',
+    dots: '<circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="12" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>',
+    download: '<path d="M11 3h2v9.2l3.6-3.6L18 10l-6 6-6-6 1.4-1.4 3.6 3.6zM5 18h14v2H5z"/>',
+    search: '<path d="M10.5 3a7.5 7.5 0 015.9 12.1l4.3 4.3-1.4 1.4-4.3-4.3A7.5 7.5 0 1110.5 3zm0 2a5.5 5.5 0 100 11 5.5 5.5 0 000-11z"/>',
+    share: '<path d="M14 3l7 6.5-7 6.5v-4c-4.4 0-7 1.3-9 4.5.4-5.5 3.7-9.2 9-9.8zM4 19h13v2H4z"/>',
+    home: '<path d="M12 3l9 8h-2.5v9h-5v-6h-3v6h-5v-9H3z"/>',
+    binoculars: '<path d="M5 4h3l1.2 6H4zM16 4h3l1 6h-5.2zM9 10h6v3H9z"/><circle cx="7" cy="16" r="4"/><circle cx="17" cy="16" r="4"/>',
+    basket: '<path d="M2 10h20l-2 10H4zm5-1l3-6h4l3 6h-2l-2.2-4h-1.6L9 9z"/>',
+    diamond: '<path d="M6 3h12l4 6-10 12L2 9z"/>',
+    user: '<circle cx="12" cy="8" r="4.5"/><path d="M3.5 21c0-4.6 3.8-7.5 8.5-7.5s8.5 2.9 8.5 7.5z"/>',
+    sound: '<path d="M3 9h4l5-4v14l-5-4H3zm13 .5a4 4 0 010 5l-1.2-1.2a2.3 2.3 0 000-2.6z"/>',
+  };
 
-  const CAPTION_RATIO = 0.22;
-  const SEARCH_DEBOUNCE_MS = 300;
+  const Icon = {
+    props: { name: { type: String, required: true }, size: { type: Number, default: 24 } },
+    template: `<svg :width="size" :height="size" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" v-html="path"></svg>`,
+    setup: (props) => ({ path: computed(() => ICONS[props.name] || "") }),
+  };
 
-  const QUICK_MENU = [
-    { label: "Gallery", colors: ["#00a6ff", "#0050ff"], icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m21 16-5-5-8 8"/>' },
-    { label: "Gray Gallery", colors: ["#9ca3af", "#4b5563"], icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/>' },
-    { label: "Live", colors: ["#fde68a", "#fecaca"], dark: true, icon: '<circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4m11.4 0a8 8 0 0 0 0-11.4"/>' },
-    { label: "Community", colors: ["#6366f1", "#06b6d4"], icon: '<path d="M2 9 12 4l10 5-10 5z"/><path d="M6 11v5c3 2.5 9 2.5 12 0v-5"/>' },
-    { label: "Library", colors: ["#f87171", "#dc2626"], icon: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M9 8h6"/>' },
-  ];
+  /* ---------- Small helpers ---------- */
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const dateLabel = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
 
-  const NAV = [
-    { route: "home", label: "Home", icon: '<path d="M3 11 12 3l9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>' },
-    { route: "discover", label: "Discover", icon: '<circle cx="7" cy="14" r="3.5"/><circle cx="17" cy="14" r="3.5"/><path d="M10 14h4M7 10V5h3M17 10V5h-3"/>' },
-    { route: "publish", label: "Publish", center: true, icon: '<path d="M5 9h14l-1.5 10h-11z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/>' },
-    { route: "sites", label: "Sites", icon: '<path d="m12 3 3 6 6 .8-4.5 4.4 1 6.3L12 17.6 6.5 20.5l1-6.3L3 9.8 9 9z"/>' },
-    { route: "me", label: "Me", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-5 15-5 16 0"/>' },
-  ];
-
-  /* ---------- Composables ---------- */
-
-  /* useToast(): small temporary message ("Link copied", "... is not part of the exercise").
-     show(text) displays it for 1.8 s; a new message replaces the old one and restarts the timer. */
+  /* useToast(): one-line message at the bottom of the screen, auto-hides after 1.8 s. */
   function useToast() {
     const message = ref("");
-    let timer;
-    function show(text) {
+    let timer = 0;
+    const show = (text) => {
       message.value = text;
       clearTimeout(timer);
       timer = setTimeout(() => (message.value = ""), 1800);
-    }
+    };
     onBeforeUnmount(() => clearTimeout(timer));
     return { message, show };
   }
 
-  /* useHashRoute(): tiny router based on the URL hash (#/home, #/me ...), no library needed.
-     Returns a reactive route name. Unknown hashes fall back to "home".
-     Listens to browser back/forward (hashchange) and cleans up when the app unmounts. */
-  function useHashRoute() {
-    const read = () => {
-      const match = location.hash.match(/^#\/([a-z]+)/);
-      const route = match ? match[1] : "home";
-      return NAV.some((n) => n.route === route) ? route : "home";
+  /* useCountdown(targetMs): "HH:MM:SS" until the target time, updated every second.
+     When it reaches zero it calls onExpire once (the page then loads the next draw). */
+  function useCountdown(targetMs, onExpire) {
+    const text = ref("00:00:00");
+    let timer = 0;
+    const tick = () => {
+      const diff = Math.max(0, Math.floor((targetMs.value - Date.now()) / 1000));
+      text.value = `${pad2(Math.floor(diff / 3600))}:${pad2(Math.floor((diff % 3600) / 60))}:${pad2(diff % 60)}`;
+      if (diff === 0 && targetMs.value) onExpire();
     };
-    const route = ref(read());
-    const onChange = () => (route.value = read());
-    onMounted(() => window.addEventListener("hashchange", onChange));
-    onBeforeUnmount(() => window.removeEventListener("hashchange", onChange));
-    return route;
+    onMounted(() => {
+      tick();
+      timer = setInterval(tick, 1000);
+    });
+    onBeforeUnmount(() => clearInterval(timer));
+    watch(targetMs, tick);
+    return text;
   }
 
-  /* useGallery(onLoaded): the core business logic of the home page: "show photos, page by page".
-     State:  category, query, columns (two lists of items), loading, hasMore, total, failed.
-     Actions:
-       loadNext() - fetch the next page and append it. Ignored while loading or when there is no more data.
-                    Each item goes into the currently shorter column (masonry look).
-                    Responses from an outdated request are dropped (requestId guard), so quickly
-                    switching category or typing never shows mixed results.
-       reset()    - start over (new category or new search text): clear everything, load page 1.
-     statusText - message under the grid: error + retry hint, "No results", or "End of list".
-     onLoaded   - callback after each load, used by the page to check if more content is needed. */
-  function useGallery(onLoaded) {
-    const category = ref(CATEGORIES[0].id);
-    const query = ref("");
+  /* useGallery(lotteryId): paging state + 2-column masonry.
+     Each new card goes to the column with the smaller estimated height (ratio is known before the image loads,
+     so the layout never jumps). Switching lottery resets to page 1; a stale response is ignored. */
+  function useGallery(lotteryId) {
     const columns = ref([[], []]);
     const loading = ref(false);
     const hasMore = ref(true);
-    const total = ref(null);
     const failed = ref(false);
-
-    let heights = [0, 0];
     let page = 0;
-    let requestId = 0;
+    let heights = [0, 0];
+    let generation = 0;
 
-    async function loadNext() {
+    const reset = () => {
+      generation++;
+      columns.value = [[], []];
+      heights = [0, 0];
+      page = 0;
+      hasMore.value = true;
+      failed.value = false;
+      loading.value = false;
+    };
+
+    async function loadMore() {
       if (loading.value || !hasMore.value) return;
+      const mine = generation;
       loading.value = true;
       failed.value = false;
-      const current = requestId;
-
       try {
-        const res = await fetchItems({ category: category.value, page: page + 1, query: query.value });
-        if (current !== requestId) return;
-        res.data.forEach((item) => {
-          const target = heights[0] <= heights[1] ? 0 : 1;
-          columns.value[target].push(item);
-          heights[target] += item.ratio + CAPTION_RATIO;
-        });
-        page = res.meta.page;
-        hasMore.value = res.meta.hasMore;
-        total.value = res.meta.total;
-      } catch (err) {
-        if (current === requestId) failed.value = true;
-      } finally {
-        if (current === requestId) {
-          loading.value = false;
-          onLoaded?.();
+        const res = await api.fetchGallery({ lottery: lotteryId.value, page: page + 1 });
+        if (mine !== generation) return;
+        page += 1;
+        for (const item of res.data) {
+          const col = heights[0] <= heights[1] ? 0 : 1;
+          columns.value[col].push(item);
+          heights[col] += item.ratio + 0.1;
         }
+        hasMore.value = res.meta.hasMore;
+      } catch (e) {
+        if (mine === generation) failed.value = true;
+      } finally {
+        if (mine === generation) loading.value = false;
       }
     }
 
-    function reset() {
-      requestId += 1;
-      page = 0;
-      heights = [0, 0];
-      columns.value = [[], []];
-      hasMore.value = true;
-      total.value = null;
-      failed.value = false;
-      loading.value = false;
-      loadNext();
-    }
-
-    const statusText = computed(() => {
-      if (failed.value) return "Could not load data. Tap to retry.";
-      if (loading.value) return "";
-      if (total.value === 0) return "No results found.";
-      if (total.value !== null && !hasMore.value) return `End of list · ${total.value} items`;
-      return "";
-    });
-
-    return { category, query, columns, loading, hasMore, failed, statusText, loadNext, reset };
+    return { columns, loading, hasMore, failed, reset, loadMore };
   }
 
   /* ---------- Components ---------- */
-
-  /* AppIcon: draws one SVG icon from the path data it receives. Used by every button with an icon. */
-  const AppIcon = {
-    props: { paths: { type: String, required: true } },
-    // `paths` only ever receives the static constants defined in this file.
-    template: `<svg viewBox="0 0 24 24" aria-hidden="true" v-html="paths"></svg>`,
-  };
-
-  /* AppHeader: top bar with brand, category tabs and the Download / Search / Share actions.
-     Emits: select (tab clicked), update:query (search text changed), share, download.
-     toggleSearch(): open or close the search box; closing clears the text, which resets the results. */
   const AppHeader = {
-    components: { AppIcon },
-    props: { categories: Array, active: String },
-    emits: ["select", "update:query", "share", "download"],
-    data() {
-      return {
-        searchOpen: false,
-        text: "",
-        icons: {
-          download: '<path d="M12 3v11m0 0-4-4m4 4 4-4M5 19h14"/>',
-          search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
-          share: '<path d="M14 4h6v6m0-6-9 9M18 14v5H5V6h5"/>',
-        },
-      };
-    },
-    watch: {
-      text(value) {
-        this.$emit("update:query", value);
-      },
-    },
-    methods: {
-      toggleSearch() {
-        this.searchOpen = !this.searchOpen;
-        if (this.searchOpen) this.$nextTick(() => this.$refs.input?.focus());
-        else this.text = "";
-      },
-    },
+    components: { Icon },
+    props: { lotteries: Array, current: String },
+    emits: ["select", "action"],
     template: `
       <header class="header">
-        <div class="header__top">
-          <a class="brand" href="#/home">
-            <span class="brand__name">Demo<em>Gallery</em></span>
-            <span class="brand__sub">Backup site</span>
-          </a>
-          <nav class="tabs" aria-label="Categories">
-            <button v-for="c in categories" :key="c.id" type="button"
-              class="tab" :class="{ 'is-active': c.id === active }"
-              :aria-pressed="c.id === active" @click="$emit('select', c.id)">{{ c.name }}</button>
-          </nav>
-          <div class="actions">
-            <button class="action" type="button" aria-label="Download" @click="$emit('download')">
-              <app-icon :paths="icons.download" /><span>Download</span>
-            </button>
-            <button class="action" type="button" aria-label="Search" :aria-expanded="searchOpen" @click="toggleSearch">
-              <app-icon :paths="icons.search" /><span>Search</span>
-            </button>
-            <button class="action" type="button" aria-label="Share" @click="$emit('share')">
-              <app-icon :paths="icons.share" /><span>Share</span>
-            </button>
-          </div>
+        <div class="logo"><b>图库<i>.demo</i></b><small>备用网址</small></div>
+        <nav class="lottery-tab">
+          <a v-for="l in lotteries" :key="l.id" class="list-tab-span" :class="{ active: l.id === current }" @click="$emit('select', l.id)"><span>{{ l.name }}</span></a>
+        </nav>
+        <div class="brt">
+          <div class="bsearch" @click="$emit('action', 'download')"><Icon name="download" :size="20" /><span>下载</span></div>
+          <div class="bsearch" @click="$emit('action', 'search')"><Icon name="search" :size="20" /><span>搜索</span></div>
+          <div class="bsearch" @click="$emit('action', 'share')"><Icon name="share" :size="20" /><span>分享</span></div>
         </div>
-        <form v-if="searchOpen" class="search" role="search" @submit.prevent>
-          <input ref="input" v-model="text" type="search" placeholder="Search by title…"
-            autocomplete="off" aria-label="Search by title">
-        </form>
       </header>`,
   };
 
-  /* QuickMenu: horizontal row of round shortcut icons under the header (static content).
-     Emits: pick(label) when an entry is tapped. */
-  const QuickMenu = {
-    components: { AppIcon },
+  /* BannerSwiper: autoplay every 4 s, loops, swipe with touch/mouse drag, dots at the bottom. */
+  const BannerSwiper = {
+    props: { slides: Array },
+    template: `
+      <div class="home-top-banner" @touchstart.passive="start" @touchend="end" @mousedown="start" @mouseup="end" @mouseenter="paused = true" @mouseleave="paused = false">
+        <div class="swiper-track" :style="{ transform: 'translateX(' + (-index * 100) + '%)' }">
+          <div class="swiper-item" v-for="s in slides" :key="s.id"><img class="swiper-img" :src="s.imageUrl" alt="" draggable="false" referrerpolicy="no-referrer" @error="onImgError($event, s)"></div>
+        </div>
+        <div class="swiper-dots"><span v-for="(s, i) in slides" :key="s.id" :class="{ active: i === index }" @click="index = i"></span></div>
+      </div>`,
+    setup(props) {
+      const index = ref(0);
+      const paused = ref(false);
+      let timer = 0;
+      let startX = 0;
+      const go = (step) => {
+        const n = props.slides.length;
+        if (n) index.value = (index.value + step + n) % n;
+      };
+      const point = (e) => (e.changedTouches ? e.changedTouches[0].clientX : e.clientX);
+      const start = (e) => (startX = point(e));
+      const end = (e) => {
+        const dx = point(e) - startX;
+        if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+      };
+      const onImgError = (e, s) => {
+        if (s.fallbackUrl && e.target.src !== s.fallbackUrl) e.target.src = s.fallbackUrl;
+      };
+      onMounted(() => (timer = setInterval(() => !paused.value && go(1), 4000)));
+      onBeforeUnmount(() => clearInterval(timer));
+      return { index, paused, start, end, onImgError };
+    },
+  };
+
+  const NoticeBar = {
+    components: { Icon },
+    props: { text: String },
+    template: `
+      <div class="uni-noticebar">
+        <Icon name="sound" :size="21" class="notice-icon" />
+        <div class="notice-wrap"><span class="notice-text">{{ text }}</span></div>
+      </div>`,
+  };
+
+  /* DrawTabs: one tab per lottery with its next draw date, plus a fixed blue "gallery" tab. */
+  const DrawTabs = {
+    props: { lotteries: Array, current: String },
+    emits: ["select", "extra"],
+    methods: { label: (id) => dateLabel(api.nextDrawAt(id)) },
+    template: `
+      <div class="tab-title">
+        <ul>
+          <li v-for="l in lotteries" :key="l.id" :class="{ active: l.id === current }" @click="$emit('select', l.id)">
+            <div class="title">{{ l.name }}</div><div class="time">{{ label(l.id) }}</div>
+          </li>
+          <li class="extra" @click="$emit('extra')"><div class="title">600图库</div><div class="time">demo.local</div></li>
+        </ul>
+      </div>`,
+  };
+
+  /* DrawResult: latest draw balls (6 + "+" + special), zodiac / element under each, countdown to next draw. */
+  const DrawResult = {
+    props: { lottery: Object, draw: Object, countdown: String },
+    emits: ["refresh", "history"],
+    template: `
+      <div class="kj-box-padding">
+        <div class="kj-box-border">
+          <div class="kj-box">
+            <div class="kj-desc">{{ lottery.name }}第{{ draw ? draw.issue : '--' }}期开奖结果：</div>
+            <div class="kj-btn" @click="$emit('refresh')">自动刷新</div>
+            <div class="kj-btn" @click="$emit('history')">开奖记录</div>
+          </div>
+          <div class="kj-nums">
+            <div class="nums-wrap" v-if="draw">
+              <template v-for="(n, i) in draw.numbers" :key="n.value">
+                <div class="nums-item plus" v-if="i === 6">+</div>
+                <div class="nums-item">
+                  <div class="nums-icon" :class="n.color">{{ n.value }}</div>
+                  <div class="nums-desc">{{ n.zodiac }}/<span :class="n.elementClass">{{ n.element }}</span></div>
+                </div>
+              </template>
+            </div>
+            <div class="nums-wrap nums-loading" v-else>加载中…</div>
+            <div class="count-down">第{{ draw ? draw.nextIssue : '--' }}期开奖倒计时：<b>{{ countdown }}</b></div>
+          </div>
+        </div>
+      </div>`,
+  };
+
+  const MENU_ROW_1 = [
+    { name: "彩色图库", icon: "image", bg: "linear-gradient(135deg,#1e9bff,#0057ff)" },
+    { name: "黑白图库", icon: "image", bg: "linear-gradient(135deg,#9a9a9a,#444)" },
+    { name: "开奖直播", icon: "live", bg: "linear-gradient(135deg,#ffb020,#ff5a3c)" },
+    { name: "高手论坛", icon: "cap", bg: "linear-gradient(135deg,#7a6cf0,#3f8de0)" },
+    { name: "资料大全", icon: "book", bg: "linear-gradient(135deg,#f07a7a,#d2434b)" },
+  ];
+  const MENU_ROW_2 = [
+    { name: "开奖记录", icon: "history", bg: "linear-gradient(135deg,#17d6b8,#00a5b8)" },
+    { name: "特码走势", icon: "star", bg: "linear-gradient(135deg,#ff9a8b,#ff6a88)" },
+    { name: "正码走势", icon: "trend", bg: "linear-gradient(135deg,#6fd3f5,#2aa0e0)" },
+    { name: "生肖走势", icon: "paw", bg: "linear-gradient(135deg,#ffd86f,#f7a935)" },
+    { name: "路珠分析", icon: "dots", bg: "linear-gradient(135deg,#c9a8ff,#9d7bea)" },
+  ];
+
+  const MenuRow = {
+    components: { Icon },
     props: { items: Array },
     emits: ["pick"],
     template: `
-      <ul class="quick">
-        <li v-for="item in items" :key="item.label">
-          <button class="quick__item" type="button" @click="$emit('pick', item.label)">
-            <span class="quick__icon"
-              :style="{ background: 'linear-gradient(135deg,' + item.colors[0] + ',' + item.colors[1] + ')', color: item.dark ? '#b45309' : '' }">
-              <app-icon :paths="item.icon" />
-            </span>
-            <span>{{ item.label }}</span>
-          </button>
-        </li>
-      </ul>`,
-  };
-
-  /* GalleryCard: one photo with its title.
-     src: the remote photo, or a generated SVG placeholder if the item has no image or the image failed (@error).
-     frameStyle: reserves the card's height from the item's ratio before the photo loads, avoiding layout jumps. */
-  const GalleryCard = {
-    props: { item: { type: Object, required: true } },
-    data() {
-      return { imageFailed: false };
-    },
-    computed: {
-      src() {
-        return this.item.imageUrl && !this.imageFailed ? this.item.imageUrl : placeholderImage(this.item);
-      },
-      frameStyle() {
-        return { aspectRatio: `1 / ${this.item.ratio}` };
-      },
-    },
-    template: `
-      <article class="card">
-        <div class="card__img" :style="frameStyle">
-          <img :src="src" :alt="item.title" loading="lazy" decoding="async" @error="imageFailed = true">
-        </div>
-        <p class="card__title">{{ item.title }}</p>
-      </article>`,
-  };
-
-  /* MasonryGrid: renders the two columns of cards; shows a skeleton block at the end of each column while loading. */
-  const MasonryGrid = {
-    components: { GalleryCard },
-    props: { columns: Array, loading: Boolean },
-    template: `
-      <div class="grid" aria-live="polite">
-        <div v-for="(col, i) in columns" :key="i" class="grid__col">
-          <gallery-card v-for="item in col" :key="item.id" :item="item" />
-          <div v-if="loading" class="skeleton" :style="{ aspectRatio: i ? '1 / 1.8' : '1 / 1.4' }"></div>
+      <div class="navbar">
+        <div class="menu-item" v-for="m in items" :key="m.name" @click="$emit('pick', m.name)">
+          <div class="nav-icon" :style="{ background: m.bg }"><Icon :name="m.icon" :size="28" /></div>
+          <span>{{ m.name }}</span>
         </div>
       </div>`,
   };
 
-  /* CategoryPills: floating shortcut to switch category without scrolling back to the header. Emits: select(id). */
-  const CategoryPills = {
-    props: { categories: Array, active: String },
+  /* Gallery: two columns of cards; a sentinel at the bottom triggers the next page. */
+  const Gallery = {
+    props: { columns: Array, loading: Boolean, hasMore: Boolean, failed: Boolean },
+    emits: ["more", "pick"],
+    template: `
+      <section class="gallary-picture">
+        <div class="columns">
+          <div class="column" v-for="(col, c) in columns" :key="c">
+            <div class="col" v-for="item in col" :key="item.id" @click="$emit('pick', item)">
+              <img :src="item.imageUrl" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" :style="{ aspectRatio: '1 / ' + item.ratio }" @error="onImgError($event, item)">
+              <div class="inner"><div class="center">{{ item.title }}</div></div>
+            </div>
+          </div>
+        </div>
+        <div ref="sentinel" class="sentinel"></div>
+        <p class="gallery-state" v-if="failed" @click="$emit('more')">加载失败，点击重试</p>
+        <p class="gallery-state" v-else-if="loading">加载中…</p>
+        <p class="gallery-state" v-else-if="!hasMore">没有更多了</p>
+      </section>`,
+    setup(props, { emit }) {
+      const sentinel = ref(null);
+      let observer = null;
+      onMounted(() => {
+        observer = new IntersectionObserver((entries) => entries[0].isIntersecting && !props.failed && emit("more"), { rootMargin: "400px" });
+        observer.observe(sentinel.value);
+      });
+      // The sentinel may stay on screen after a page loads (short pages), so re-check on every state change.
+      watch(() => [props.loading, props.hasMore], async () => {
+        await nextTick();
+        if (!props.loading && props.hasMore && !props.failed && sentinel.value) {
+          const r = sentinel.value.getBoundingClientRect();
+          if (r.top < window.innerHeight + 400) emit("more");
+        }
+      });
+      onBeforeUnmount(() => observer && observer.disconnect());
+      // A card whose image fails to load gets a generated poster of the same shape (only once, no retry loop).
+      const onImgError = (e, item) => {
+        if (!e.target.dataset.fallback) {
+          e.target.dataset.fallback = "1";
+          e.target.src = api.placeholderImage(item);
+        }
+      };
+      return { sentinel, onImgError };
+    },
+  };
+
+  /* PillBar: floating lottery switch above the tab bar. */
+  const PillBar = {
+    props: { lotteries: Array, current: String },
     emits: ["select"],
     template: `
-      <div class="pills" role="group" aria-label="Quick category switch">
-        <button v-for="c in categories" :key="c.id" type="button"
-          class="pill" :class="{ 'is-active': c.id === active }"
-          :aria-pressed="c.id === active" @click="$emit('select', c.id)">
-          <span class="pill__dot"></span>{{ c.name }}
-        </button>
+      <div class="list-tab-btn">
+        <a v-for="l in lotteries" :key="l.id" class="list-tab-span" :class="{ active: l.id === current }"
+           :style="l.id === current ? null : { color: l.color, borderColor: l.color }" @click="$emit('select', l.id)">
+          <i class="icon-channel" :style="{ background: l.id === current ? '#fff' : l.color, color: l.id === current ? '#07c160' : '#fff' }">{{ l.badge }}</i>
+          <span>{{ l.name }}</span>
+        </a>
       </div>`,
   };
 
-  /* BottomNav: 5-item bottom tab bar. Each item is a link to #/route; the current route is highlighted. */
-  const BottomNav = {
-    components: { AppIcon },
-    props: { items: Array, current: String },
+  const TabBar = {
+    components: { Icon },
+    props: { current: String },
+    emits: ["select"],
+    data: () => ({
+      tabs: [
+        { key: "home", name: "图库", icon: "home" },
+        { key: "discover", name: "发现", icon: "binoculars" },
+        { key: "publish", name: "发布", icon: "basket", middle: true },
+        { key: "sites", name: "好站", icon: "diamond" },
+        { key: "me", name: "我的", icon: "user" },
+      ],
+    }),
     template: `
-      <nav class="bottom" aria-label="Main navigation">
-        <a v-for="n in items" :key="n.route" :href="'#/' + n.route"
-          class="bottom__item" :class="{ 'is-active': n.route === current, 'bottom__item--center': n.center }"
-          :aria-current="n.route === current ? 'page' : null">
-          <app-icon :paths="n.icon" /><span>{{ n.label }}</span>
-        </a>
-      </nav>`,
+      <footer class="floor-bottom">
+        <div class="item-tab" v-for="t in tabs" :key="t.key" :class="{ middle: t.middle }" @click="$emit('select', t.key)">
+          <span class="tab-ico" v-if="t.middle"><Icon :name="t.icon" :size="26" /></span>
+          <Icon v-else :name="t.icon" :size="20" class="tabbar-img" />
+          <span :class="{ active: t.key === current }">{{ t.name }}</span>
+        </div>
+      </footer>`,
   };
 
   /* ---------- Root ---------- */
-
-  /* App: root component. Connects the route, the gallery state and the UI components.
-     - Infinite scroll: an invisible "sentinel" at the bottom of the list is watched by IntersectionObserver;
-       when it comes into view (200 px early) the next page is loaded.
-     - recheck(): after each load, re-observe the sentinel so a tall screen keeps loading until it is filled.
-     - selectCategory(id): change category, reload from page 1, scroll to top.
-     - Search: typing is debounced (300 ms) so one reload happens after the user stops typing.
-     - share(): native share sheet if available, otherwise copy the link; cancelling is not an error.
-     - retry(): tap the error message to try loading again.
-     - Non-home routes show a simple "not part of the exercise" placeholder. */
   const App = {
-    components: { AppHeader, QuickMenu, MasonryGrid, CategoryPills, BottomNav },
+    components: { AppHeader, BannerSwiper, NoticeBar, DrawTabs, DrawResult, MenuRow, Gallery, PillBar, TabBar },
     setup() {
-      const content = ref(null);
-      const sentinel = ref(null);
-      const route = useHashRoute();
-      const toast = useToast();
-      let observer;
+      const lotteries = api.LOTTERIES;
+      const lotteryId = ref("mo");
+      const lottery = computed(() => lotteries.find((l) => l.id === lotteryId.value));
+      const banners = ref([]);
+      const notice = ref("");
+      const draw = ref(null);
+      const nextDrawMs = computed(() => (draw.value ? draw.value.nextDrawAt : 0));
+      const { message, show } = useToast();
+      const gallery = useGallery(lotteryId);
+      const tab = ref("home");
 
-      // Re-observing makes the observer fire again, which keeps filling a tall viewport.
-      const recheck = () => {
-        if (!observer || !sentinel.value) return;
-        observer.unobserve(sentinel.value);
-        observer.observe(sentinel.value);
+      const loadDraw = async () => {
+        const id = lotteryId.value;
+        const res = await api.fetchDraw(id);
+        if (id === lotteryId.value) draw.value = res.data;
       };
+      const countdown = useCountdown(nextDrawMs, loadDraw);
 
-      const gallery = useGallery(recheck);
-
-      onMounted(() => {
-        observer = new IntersectionObserver(
-          (entries) => entries.some((e) => e.isIntersecting) && gallery.loadNext(),
-          { root: content.value, rootMargin: "200px" }
-        );
-        observer.observe(sentinel.value);
+      const selectLottery = (id) => {
+        if (id === lotteryId.value) return;
+        lotteryId.value = id;
+        draw.value = null;
+        window.scrollTo({ top: 0 });
+      };
+      watch(lotteryId, () => {
         gallery.reset();
-      });
-      onBeforeUnmount(() => observer?.disconnect());
-
-      function selectCategory(id) {
-        if (id === gallery.category.value) return;
-        gallery.category.value = id;
-        gallery.reset();
-        if (content.value) content.value.scrollTop = 0;
-      }
-
-      let searchTimer;
-      watch(gallery.query, () => {
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(() => {
-          gallery.reset();
-          if (content.value) content.value.scrollTop = 0;
-        }, SEARCH_DEBOUNCE_MS);
+        loadDraw();
+        gallery.loadMore();
       });
 
-      async function share() {
-        const data = { title: document.title, url: location.href };
-        try {
-          if (navigator.share) await navigator.share(data);
-          else {
+      const soon = (what) => show(`「${what}」为演示页面，暂未开放`);
+
+      async function onHeaderAction(kind) {
+        if (kind === "share") {
+          const data = { title: document.title, url: location.href };
+          if (navigator.share) return navigator.share(data).catch(() => {});
+          try {
             await navigator.clipboard.writeText(data.url);
-            toast.show("Link copied");
+            show("链接已复制");
+          } catch (e) {
+            show(data.url);
           }
-        } catch (err) {
-          if (err.name !== "AbortError") toast.show("Sharing is not available");
+          return;
         }
+        soon(kind === "search" ? "搜索" : "下载");
       }
 
-      function retry() {
-        if (!gallery.failed.value) return;
-        gallery.failed.value = false;
-        gallery.loadNext();
-      }
-
-      const isHome = computed(() => route.value === "home");
-      const otherTitle = computed(() => NAV.find((n) => n.route === route.value)?.label ?? "");
+      onMounted(async () => {
+        const [b, n] = await Promise.all([api.fetchBanners(), api.fetchNotice()]);
+        banners.value = b.data;
+        notice.value = n.data.text;
+        loadDraw();
+        gallery.loadMore();
+      });
 
       return {
-        content, sentinel, route, isHome, otherTitle, toast,
-        categories: CATEGORIES, quickMenu: QUICK_MENU, nav: NAV,
-        gallery, selectCategory, share, retry,
+        lotteries, lotteryId, lottery, banners, notice, draw, countdown, tab, message,
+        ...gallery, MENU_ROW_1, MENU_ROW_2,
+        selectLottery, soon, onHeaderAction,
+        refreshDraw: async () => { await loadDraw(); show("已刷新"); },
+        selectTab: (key) => (key === "home" ? (tab.value = "home") : soon({ discover: "发现", publish: "发布", sites: "好站", me: "我的" }[key])),
       };
     },
     template: `
       <div class="app">
-        <app-header
-          :categories="categories" :active="gallery.category.value"
-          @select="selectCategory"
-          @update:query="gallery.query.value = $event"
-          @share="share"
-          @download="toast.show('Download is not part of the exercise')" />
-
-        <main class="content" ref="content">
-          <section v-show="isHome">
-            <quick-menu :items="quickMenu" @pick="toast.show($event + ' is not part of the exercise')" />
-            <masonry-grid :columns="gallery.columns.value" :loading="gallery.loading.value" />
-            <p class="status" role="status" @click="retry">{{ gallery.statusText.value }}</p>
-            <div class="sentinel" ref="sentinel"></div>
-          </section>
-
-          <section v-if="!isHome" class="view--placeholder">
-            <h2>{{ otherTitle }}</h2>
-            <p>This section is not part of the exercise.</p>
-          </section>
+        <AppHeader :lotteries="lotteries" :current="lotteryId" @select="selectLottery" @action="onHeaderAction" />
+        <main class="page">
+          <BannerSwiper :slides="banners" />
+          <NoticeBar :text="notice" />
+          <DrawTabs :lotteries="lotteries" :current="lotteryId" @select="selectLottery" @extra="soon('600图库')" />
+          <DrawResult :lottery="lottery" :draw="draw" :countdown="countdown" @refresh="refreshDraw" @history="soon('开奖记录')" />
+          <MenuRow class="menu-sticky" :items="MENU_ROW_1" @pick="soon" />
+          <MenuRow :items="MENU_ROW_2" @pick="soon" />
+          <Gallery :columns="columns" :loading="loading" :has-more="hasMore" :failed="failed" @more="loadMore" @pick="soon($event.title)" />
         </main>
-
-        <category-pills v-show="isHome" :categories="categories" :active="gallery.category.value" @select="selectCategory" />
-        <bottom-nav :items="nav" :current="route" />
-        <div v-if="toast.message.value" class="toast" role="status">{{ toast.message.value }}</div>
+        <PillBar :lotteries="lotteries" :current="lotteryId" @select="selectLottery" />
+        <TabBar :current="tab" @select="selectTab" />
+        <div class="toast" :class="{ show: message }">{{ message }}</div>
       </div>`,
   };
 

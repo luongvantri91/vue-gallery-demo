@@ -81,7 +81,7 @@ User clicks a button ──► ⑤ load route chunk ──► call API          
 | 5 | 好站 | `GET api.edgoalb.com/sites?type=am2lhc&page=1&encode=true` | C | 200 |
 | 6 | 好站 | `GET api.edgoalb.com/sites?category_id=h100&page=1&encode=true` | C | 200 |
 
-The 发布 and 会员登陆 pages are static login forms and make no API calls. Full request/response details are in [api-info.md](./api-info.md).
+The 发布 and 会员登陆 pages are static login forms and make no API calls. Details of two representative requests are in section 4.3.
 
 #### 4.3. Detailed Analysis of Two Representative APIs
 
